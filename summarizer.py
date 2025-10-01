@@ -1,52 +1,33 @@
 # summarizer.py
-from langchain_core.prompts import ChatPromptTemplate
 from rag_pipeline import llm_model  # Import your existing LLM model
 
 def generate_ai_summary(text, summary_length=250):
     """
-    Generate a proper abstractive summary using the LLM
-    
-    Args:
-        text (str): The text content to summarize
-        summary_length (int): Target word count for the summary
-        
-    Returns:
-        str: AI-generated summary
+    Generate a proper abstractive summary using the Qwen model
     """
     try:
-        # Create a smart prompt for legal document summarization
-        prompt_template = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert legal assistant. Create a concise, coherent summary of the provided legal document.
-            
-            GUIDELINES:
-            - Understand the core concepts and main points
-            - Generate NEW sentences that capture the essence (do not copy paste text)
-            - Maintain legal accuracy and terminology
-            - Focus on key clauses, obligations, rights, and important details
-            - Keep the summary clear and professional
-            - Target length: {summary_length} words
-            - Write in complete, flowing paragraphs"""),
-            ("human", "DOCUMENT TEXT:\n\n{text}\n\nPlease provide a comprehensive summary:")
-        ])
+        # Create a smart prompt for document summarization
+        prompt_text = f"""You are an expert assistant. Create a concise, coherent summary of the provided document.
+
+GUIDELINES:
+- Understand the core concepts and main points
+- Generate NEW sentences that capture the essence (do not copy paste text)
+- Maintain accuracy and terminology
+- Focus on key information and important details
+- Keep the summary clear and professional
+- Target length: {summary_length} words
+- Write in complete, flowing paragraphs
+
+DOCUMENT TEXT:
+
+{text[:10000]}  # Truncate very long documents
+
+Please provide a comprehensive summary:"""
         
-        # Truncate very long documents to avoid context limits while keeping important content
-        # Keep the beginning and end which often contains key information
-        if len(text) > 12000:
-            half_limit = 6000
-            truncated_text = text[:half_limit] + "\n\n[...document continues...]\n\n" + text[-half_limit:]
-        else:
-            truncated_text = text
+        # Generate the summary using your Qwen model
+        response = llm_model.invoke(prompt_text)
         
-        # Format the prompt
-        prompt = prompt_template.format_messages(
-            summary_length=summary_length,
-            text=truncated_text
-        )
-        
-        # Generate the summary using your existing LLM
-        response = llm_model.invoke(prompt)
-        
-        return response.content.strip()
+        return response.strip()
         
     except Exception as e:
         return f"Error generating summary: {str(e)}"
@@ -54,13 +35,6 @@ def generate_ai_summary(text, summary_length=250):
 def get_summary_metrics(original_text, summary_text):
     """
     Calculate summary metrics
-    
-    Args:
-        original_text (str): Original document text
-        summary_text (str): Generated summary text
-        
-    Returns:
-        dict: Summary metrics
     """
     original_words = len(original_text.split())
     summary_words = len(summary_text.split())

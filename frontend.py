@@ -9,14 +9,14 @@ from rag_pipeline import answer_query, llm_model
 from summarizer import generate_ai_summary, get_summary_metrics
 from drafting import drafting_interface
 
-# Import vector database functions for dynamic processing
+# Import vector database functions for dynamic processing - FAISS ONLY
 from langchain_community.document_loaders import PDFPlumberLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS  # ✅ FAISS only
 
 st.set_page_config(
-    page_title="AskMyDoc",
+    page_title="AskMyDoc - PDF Analysis & Q&A",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -76,7 +76,7 @@ st.markdown("""
         padding: 1rem;
     }
 
-    [data-testid="stChatMessage"][role="AI Lawyer"] {
+    [data-testid="stChatMessage"][role="AI Assistant"] {
         background-color: #f1f8e9;
         border-radius: 10px;
         padding: 1rem;
@@ -91,6 +91,30 @@ st.markdown("""
         border-left: 4px solid #4CAF50;
         padding: 1.5rem;
         border-radius: 8px;
+        margin: 1rem 0;
+    }
+    
+    .file-upload-box {
+        border: 2px dashed #ccc;
+        border-radius: 10px;
+        padding: 2rem;
+        text-align: center;
+        margin: 1rem 0;
+    }
+    
+    .success-box {
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
+        border-radius: 5px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    
+    .error-box {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        border-radius: 5px;
+        padding: 1rem;
         margin: 1rem 0;
     }
 
@@ -108,20 +132,26 @@ if "full_text" not in st.session_state:
     st.session_state.full_text = ""
 if "summary" not in st.session_state:
     st.session_state.summary = ""
+if "processing_complete" not in st.session_state:
+    st.session_state.processing_complete = False
 
 # Functions for dynamic PDF processing
 @st.cache_resource
 def get_embeddings_model():
     """Initialize and cache the embeddings model"""
     try:
-        embeddings = OllamaEmbeddings(model="deepseek-r1:1.5b")
+        # Keep using nomic-embed-text (same as your rag_pipeline.py)
+        embeddings = OllamaEmbeddings(model="nomic-embed-text")
         return embeddings
     except Exception as e:
-        st.error(f"Error initializing embeddings model: {e}")
+        st.error(f"❌ Error initializing embeddings model: {e}")
+        st.error("Please run: `ollama pull nomic-embed-text`")
         return None
 
+# In the process_uploaded_pdf function, update the embeddings section:
+# In the process_uploaded_pdf function, update the embeddings section:
 def process_uploaded_pdf(uploaded_file):
-    """Process uploaded PDF and create vector database"""
+    """Process uploaded PDF and create FAISS vector database"""
     try:
         # Create a temporary file to save the uploaded PDF
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
@@ -148,12 +178,14 @@ def process_uploaded_pdf(uploaded_file):
         )
         text_chunks = text_splitter.split_documents(documents)
         
-        # Get embeddings model
-        embeddings = get_embeddings_model()
+        # Get embeddings model - UPDATED to use Ollama
+        from langchain_community.embeddings import OllamaEmbeddings
+        embeddings = OllamaEmbeddings(model="nomic-embed-text")
+        
         if not embeddings:
             return None
         
-        # Create vector database
+        # ✅ USE FAISS
         vector_db = FAISS.from_documents(text_chunks, embeddings)
         
         # Clean up temporary file
@@ -162,40 +194,51 @@ def process_uploaded_pdf(uploaded_file):
         return vector_db, len(documents), len(text_chunks)
         
     except Exception as e:
-        st.error(f"Error processing PDF: {e}")
+        st.error(f"❌ Error processing PDF: {e}")
         return None
 
 def retrieve_docs_from_db(query, vector_db):
     """Retrieve documents from the provided vector database"""
     if vector_db is None:
         return []
-    return vector_db.similarity_search(query)
-
-def get_context_from_docs(documents):
-    """Get context from retrieved documents"""
-    context = "\n\n".join([doc.page_content for doc in documents])
-    return context
+    try:
+        return vector_db.similarity_search(query, k=3)
+    except Exception as e:
+        st.error(f"Error retrieving documents: {e}")
+        return []
 
 # Header
-st.markdown("<h1 style='text-align: center; color: #1f77b4;'>AskMyDoc</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #555;'>Upload your document and ask questions about its content.</p>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #1f77b4;'>AskMyDoc - PDF Analysis & Q&A</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #555;'>Upload your PDF documents and get AI-powered analysis, summaries, and answers.</p>", unsafe_allow_html=True)
+
+# Model status check
+try:
+    if llm_model is None:
+        st.error("❌ AI model is not available. Please check if Ollama is running and models are installed.")
+    else:
+        st.success("✅ AI model is ready!")
+except Exception as e:
+    st.error(f"❌ Error loading AI model: {e}")
 
 # Create tabs for different functionalities
-tab1, tab2,tab3 = st.tabs(["📄 Document Q&A", "📋 AI Summarizer", "📝 Document Drafting"])
+tab1, tab2, tab3 = st.tabs(["📄 Document Q&A", "📋 AI Summarizer", "📝 Document Drafting"])
 
 with tab1:
     # Create two columns for layout
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        st.subheader("1. Upload a Document")
+        st.subheader("1. Upload a PDF Document")
+        
+        st.markdown('<div class="file-upload-box">', unsafe_allow_html=True)
         uploaded_file = st.file_uploader(
-            "Upload PDF",
+            "Choose a PDF file",
             type="pdf",
             accept_multiple_files=False,
             help="Upload a PDF document to analyze its content.",
             key="qa_uploader"
         )
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # Process uploaded file
         if uploaded_file is not None:
@@ -204,48 +247,69 @@ with tab1:
             # Check if this is a new file
             if st.session_state.current_file_name != file_name:
                 st.session_state.current_file_name = file_name
+                st.session_state.processing_complete = False
                 
-                with st.spinner("Processing your document... This may take a moment."):
+                with st.spinner("🔄 Processing your document... This may take a moment."):
                     result = process_uploaded_pdf(uploaded_file)
                     
                     if result:
                         vector_db, num_pages, num_chunks = result
                         st.session_state.vector_db = vector_db
+                        st.session_state.processing_complete = True
                         
+                        st.markdown('<div class="success-box">', unsafe_allow_html=True)
                         st.success(f"✅ Document processed successfully!")
                         st.info(f"📄 Pages: {num_pages} | 📝 Text chunks: {num_chunks}")
+                        st.markdown('</div>', unsafe_allow_html=True)
                         
                         # Clear previous messages when new file is uploaded
                         st.session_state.messages = []
                     else:
+                        st.markdown('<div class="error-box">', unsafe_allow_html=True)
                         st.error("❌ Failed to process the document. Please try again.")
+                        st.markdown('</div>', unsafe_allow_html=True)
             else:
-                st.success(f"✅ Document '{file_name}' is ready for questions!")
+                if st.session_state.processing_complete:
+                    st.markdown('<div class="success-box">', unsafe_allow_html=True)
+                    st.success(f"✅ Document '{file_name}' is ready for questions!")
+                    st.markdown('</div>', unsafe_allow_html=True)
         
         # Instructions
         if uploaded_file is None:
             st.info("👆 Please upload a PDF document to get started.")
+            st.markdown("""
+            **Supported Features:**
+            - 📖 PDF text extraction
+            - 🤖 AI-powered Q&A
+            - 🔍 Semantic search
+            - 📊 Document analysis
+            """)
         else:
-            st.success("🎉 Document loaded! You can now ask questions in the chat.")
+            st.markdown("""
+            **🎉 Document loaded! You can now:**
+            - Ask questions about the content
+            - Get AI-powered answers
+            - Analyze document sections
+            """)
 
     with col2:
-        st.subheader("2. Ask about your Document to our AI")
+        st.subheader("2. Ask Questions about Your Document")
         
-        # Display chat messages from history
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-        
-        # Chat input
-        user_query = st.chat_input("Ask a question about your document...", key="qa_chat")
-        
-        # Process user query
-        if user_query:
-            if uploaded_file is None:
-                st.error("Please upload a PDF file first.")
-            elif st.session_state.vector_db is None:
-                st.error("Document is still being processed. Please wait.")
-            else:
+        if uploaded_file is None:
+            st.info("📝 Please upload a PDF document first to start asking questions.")
+        elif not st.session_state.processing_complete:
+            st.warning("⏳ Document is still being processed. Please wait...")
+        else:
+            # Display chat messages from history
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.write(message["content"])
+            
+            # Chat input
+            user_query = st.chat_input("Ask a question about your document...", key="qa_chat")
+            
+            # Process user query
+            if user_query:
                 # Add user message to chat history
                 st.session_state.messages.append({"role": "user", "content": user_query})
                 with st.chat_message("user"):
@@ -254,7 +318,7 @@ with tab1:
                 # Generate response
                 try:
                     with st.chat_message("assistant"):
-                        with st.spinner("Thinking..."):
+                        with st.spinner("🤔 Thinking..."):
                             # Retrieve relevant documents
                             retrieved_docs = retrieve_docs_from_db(user_query, st.session_state.vector_db)
                             
@@ -270,12 +334,19 @@ with tab1:
                             
                             st.write(response)
                             
+                            # Show source information
+                            if retrieved_docs:
+                                with st.expander("📚 Source Information"):
+                                    st.write(f"Found {len(retrieved_docs)} relevant sections")
+                                    for i, doc in enumerate(retrieved_docs[:2], 1):
+                                        st.write(f"**Section {i}:** {doc.page_content[:200]}...")
+                            
                             # Add AI response to chat history
                             st.session_state.messages.append({"role": "assistant", "content": response})
                     
                 except Exception as e:
-                    st.error(f"An error occurred while generating the response: {e}")
-                    st.error("Please ensure your models are running correctly.")
+                    st.error(f"❌ An error occurred while generating the response: {e}")
+                    st.error("Please ensure your AI models are running correctly.")
 
 with tab2:
     st.subheader("📋 AI Document Summarizer")
@@ -302,13 +373,17 @@ with tab2:
             if st.button("🚀 Generate AI Summary", type="primary", use_container_width=True):
                 if st.session_state.full_text:
                     with st.spinner("🤖 AI is analyzing and summarizing your document..."):
-                        summary = generate_ai_summary(
-                            st.session_state.full_text, 
-                            summary_length=summary_length
-                        )
-                        st.session_state.summary = summary
+                        try:
+                            summary = generate_ai_summary(
+                                st.session_state.full_text, 
+                                summary_length=summary_length
+                            )
+                            st.session_state.summary = summary
+                            st.success("✅ Summary generated successfully!")
+                        except Exception as e:
+                            st.error(f"❌ Error generating summary: {e}")
                 else:
-                    st.warning("Please upload a document in the 'Document Q&A' tab first.")
+                    st.warning("⚠️ Please upload a document in the 'Document Q&A' tab first.")
 
         if st.session_state.summary:
             metrics = get_summary_metrics(st.session_state.full_text, st.session_state.summary)
@@ -358,13 +433,74 @@ with tab2:
             
             if st.button("🚀 Summarize Custom Text", key="custom_summarize"):
                 with st.spinner("🤖 AI is analyzing and summarizing..."):
-                    summary = generate_ai_summary(custom_text, custom_length)
-                    st.markdown("### 📝 AI-Generated Summary")
-                    st.markdown("<div class='summary-box'>", unsafe_allow_html=True)
-                    st.markdown(summary)
-                    st.markdown("</div>", unsafe_allow_html=True)
+                    try:
+                        summary = generate_ai_summary(custom_text, custom_length)
+                        st.markdown("### 📝 AI-Generated Summary")
+                        st.markdown("<div class='summary-box'>", unsafe_allow_html=True)
+                        st.markdown(summary)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                        
+                        # Download for custom text
+                        st.download_button(
+                            label="📥 Download Custom Summary",
+                            data=summary,
+                            file_name="custom_text_summary.txt",
+                            mime="text/plain",
+                            use_container_width=True,
+                            key="custom_download"
+                        )
+                    except Exception as e:
+                        st.error(f"❌ Error generating summary: {e}")
+
 with tab3:
     drafting_interface()
+
 # Footer
 st.markdown("---")
-st.markdown("<p style='text-align: center; color: #666;'>AI Legal Assistant - Powered by RAG Technology & AI Summarization</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #666;'>PDF Analysis Tool - Powered by FAISS & AI Technology</p>", unsafe_allow_html=True)
+
+# Sidebar with information
+with st.sidebar:
+    st.header("ℹ️ About")
+    st.markdown("""
+    **AskMyDoc** is an AI-powered PDF analysis tool that allows you to:
+    
+    - **Upload PDF documents**
+    - **Ask questions** about content
+    - **Generate AI summaries**
+    - **Create new documents**
+    
+    **Requirements:**
+    - Ollama running locally
+    - Embedding models installed
+    - LLM models installed
+    
+    **Quick Setup:**
+    ```bash
+    ollama pull nomic-embed-text
+    ollama pull llama2:3b
+    ```
+    """)
+    
+    # Model status
+    st.header("🔧 System Status")
+    try:
+        if llm_model is not None:
+            st.success("✅ AI Model: Ready")
+        else:
+            st.error("❌ AI Model: Not Available")
+    except:
+        st.error("❌ AI Model: Not Available")
+    
+    # Clear conversation button
+    if st.button("🗑️ Clear Conversation", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+    
+    # Debug information
+    if st.checkbox("Show debug info"):
+        st.write("Session state keys:", list(st.session_state.keys()))
+        if st.session_state.vector_db:
+            st.success("Vector DB: Loaded")
+        else:
+            st.info("Vector DB: Not loaded")
